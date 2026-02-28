@@ -181,12 +181,13 @@ func (m *Manager) HandleCallEvent(callID, event string) {
 	case "in_call", "connect":
 		session.Status = models.CallStatusAnswered
 	case "ended", "terminate", "missed", "unanswered":
-		if session.TransferStatus == models.CallTransferStatusWaiting {
+		switch session.TransferStatus {
+		case models.CallTransferStatusWaiting:
 			action = "hangup_transfer"
-		} else if session.TransferStatus == models.CallTransferStatusConnected {
+		case models.CallTransferStatusConnected:
 			action = "end_transfer"
 			transferID = session.TransferID
-		} else {
+		default:
 			session.Status = models.CallStatusCompleted
 			action = "cleanup"
 		}
