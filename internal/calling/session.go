@@ -403,7 +403,7 @@ func (m *Manager) cleanupSession(callID string) {
 		m.db.Model(&models.CallLog{}).
 			Where("id = ?", callLogID).
 			Update("disconnected_by", models.DisconnectedByClient)
-		m.broadcastTransferEvent(orgID, websocket.TypeCallTransferAbandoned, map[string]any{
+		m.broadcastEvent(orgID, websocket.TypeCallTransferAbandoned, map[string]any{
 			"id":           transferID.String(),
 			"completed_at": now.Format(time.RFC3339),
 		})
@@ -457,6 +457,74 @@ func (m *Manager) cleanupSession(callID string) {
 	}
 
 	m.log.Info("Call session cleaned up", "call_id", callID)
+}
+
+// --- Shared helpers to reduce duplication across calling files ---
+
+// broadcastEvent broadcasts a call event via WebSocket to an organization.
+func (m *Manager) broadcastEvent(orgID uuid.UUID, eventType string, payload map[string]any) {
+	if m.wsHub == nil {
+		return
+	}
+	m.wsHub.BroadcastToOrg(orgID, websocket.WSMessage{
+		Type:    eventType,
+		Payload: payload,
+	})
+}
+
+// setupAudioBridge creates a recorder (if enabled), builds an AudioBridge,
+// and assigns both to the session under its lock.
+func (m *Manager) setupAudioBridge(session *CallSession) *AudioBridge {
+	recorder := m.newRecorderIfEnabled()
+	bridge := NewAudioBridge(recorder)
+	session.mu.Lock()
+	session.Bridge = bridge
+	session.Recorder = recorder
+	session.mu.Unlock()
+	return bridge
+}
+
+// safeClose closes a channel only if it hasn't already been closed.
+func safeClose(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+}
+
+// terminateCall terminates an active call via the WhatsApp API.
+func (m *Manager) terminateCall(session *CallSession, waAccount *whatsapp.Account) {
+	c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := m.whatsapp.TerminateCall(c, waAccount, session.ID); err != nil {
+		m.log.Error("Failed to terminate call via API", "error", err, "call_id", session.ID)
+	}
+}
+
+// terminateCallBySession looks up the WhatsApp account from the DB and
+// terminates the call. Used when only the session is available.
+func (m *Manager) terminateCallBySession(session *CallSession) {
+	var account models.WhatsAppAccount
+	if err := m.db.Where("organization_id = ? AND name = ?", session.OrganizationID, session.AccountName).
+		First(&account).Error; err != nil {
+		m.log.Error("Failed to look up account for call termination", "error", err, "call_id", session.ID)
+		return
+	}
+	waAccount := account.ToWAAccount()
+	if waAccount.AccessToken != "" {
+		m.terminateCall(session, waAccount)
+	}
+}
+
+// durationSince calculates seconds elapsed since a given time, returning 0 if
+// the pointer is nil.
+func durationSince(from *time.Time, now time.Time) int {
+	if from == nil {
+		return 0
+	}
+	return int(now.Sub(*from).Seconds())
 }
 
 // newRecorderIfEnabled creates a CallRecorder if recording is enabled, or returns nil.

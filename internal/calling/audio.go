@@ -83,12 +83,7 @@ func (p *AudioPlayer) PlayFile(filePath string) (int, error) {
 
 // Stop stops the current audio playback
 func (p *AudioPlayer) Stop() {
-	select {
-	case <-p.stop:
-		// Already stopped/closed
-	default:
-		close(p.stop)
-	}
+	safeClose(p.stop)
 }
 
 // IsStopped returns true if the player has been stopped.

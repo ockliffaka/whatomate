@@ -1,7 +1,6 @@
 package calling
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -557,16 +556,6 @@ func (m *Manager) saveIVRPath(session *CallSession, path []map[string]string) {
 	m.db.Model(&models.CallLog{}).
 		Where("id = ?", session.CallLogID).
 		Update("ivr_path", pathJSON)
-}
-
-// terminateCall terminates an active call via the WhatsApp API.
-func (m *Manager) terminateCall(session *CallSession, waAccount *whatsapp.Account) {
-	c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := m.whatsapp.TerminateCall(c, waAccount, session.ID); err != nil {
-		m.log.Error("Failed to terminate call via API", "error", err, "call_id", session.ID)
-	}
 }
 
 // getConfigInt extracts an int from a config map with a default fallback.

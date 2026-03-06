@@ -74,10 +74,5 @@ func (b *AudioBridge) forward(src *webrtc.TrackRemote, dst *webrtc.TrackLocalSta
 
 // Stop terminates both forwarding goroutines.
 func (b *AudioBridge) Stop() {
-	select {
-	case <-b.stop:
-		// Already stopped
-	default:
-		close(b.stop)
-	}
+	safeClose(b.stop)
 }

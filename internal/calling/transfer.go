@@ -86,7 +86,7 @@ func (m *Manager) initiateTransfer(session *CallSession, waAccount string, teamT
 		teamIDStr = teamID.String()
 	}
 
-	m.broadcastTransferEvent(transfer.OrganizationID, websocket.TypeCallTransferWaiting, map[string]any{
+	m.broadcastEvent(transfer.OrganizationID, websocket.TypeCallTransferWaiting, map[string]any{
 		"id":               transfer.ID.String(),
 		"call_log_id":      transfer.CallLogID.String(),
 		"whatsapp_call_id": transfer.WhatsAppCallID,
@@ -232,11 +232,7 @@ func (m *Manager) completeTransferConnection(session *CallSession, transferID, a
 
 	// Signal that bridge is taking over the caller track
 	session.mu.Lock()
-	select {
-	case <-session.BridgeStarted:
-	default:
-		close(session.BridgeStarted)
-	}
+	safeClose(session.BridgeStarted)
 	session.mu.Unlock()
 
 	// Update transfer status
@@ -263,7 +259,7 @@ func (m *Manager) completeTransferConnection(session *CallSession, transferID, a
 	session.mu.Unlock()
 
 	// Broadcast connected event
-	m.broadcastTransferEvent(session.OrganizationID, websocket.TypeCallTransferConnected, map[string]any{
+	m.broadcastEvent(session.OrganizationID, websocket.TypeCallTransferConnected, map[string]any{
 		"id":           transferID.String(),
 		"agent_id":     agentID.String(),
 		"connected_at": now.Format(time.RFC3339),
@@ -275,13 +271,7 @@ func (m *Manager) completeTransferConnection(session *CallSession, transferID, a
 	)
 
 	// Create recorder and start audio bridge (blocks until stopped)
-	recorder := m.newRecorderIfEnabled()
-	bridge := NewAudioBridge(recorder)
-	session.mu.Lock()
-	session.Bridge = bridge
-	session.Recorder = recorder
-	session.mu.Unlock()
-
+	bridge := m.setupAudioBridge(session)
 	bridge.Start(callerRemote, agentLocal, agentRemoteTrack, callerLocal)
 }
 
@@ -332,11 +322,10 @@ func (m *Manager) EndTransfer(transferID uuid.UUID) {
 		return
 	}
 
+	talkDuration := durationSince(transfer.ConnectedAt, now)
 	holdDuration := 0
-	talkDuration := 0
 	if transfer.ConnectedAt != nil {
 		holdDuration = int(transfer.ConnectedAt.Sub(transfer.TransferredAt).Seconds())
-		talkDuration = int(now.Sub(*transfer.ConnectedAt).Seconds())
 	} else {
 		holdDuration = int(now.Sub(transfer.TransferredAt).Seconds())
 	}
@@ -349,7 +338,7 @@ func (m *Manager) EndTransfer(transferID uuid.UUID) {
 	})
 
 	// Broadcast completed event
-	m.broadcastTransferEvent(session.OrganizationID, websocket.TypeCallTransferCompleted, map[string]any{
+	m.broadcastEvent(session.OrganizationID, websocket.TypeCallTransferCompleted, map[string]any{
 		"id":            transferID.String(),
 		"hold_duration": holdDuration,
 		"talk_duration": talkDuration,
@@ -363,16 +352,7 @@ func (m *Manager) EndTransfer(transferID uuid.UUID) {
 	)
 
 	// Terminate the WhatsApp call so the caller's phone also disconnects
-	var account models.WhatsAppAccount
-	if err := m.db.Where("organization_id = ? AND name = ?", session.OrganizationID, session.AccountName).
-		First(&account).Error; err == nil {
-		waAccount := account.ToWAAccount()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := m.whatsapp.TerminateCall(ctx, waAccount, session.ID); err != nil {
-			m.log.Error("Failed to terminate WhatsApp call after transfer end", "error", err, "call_id", session.ID)
-		}
-	}
+	m.terminateCallBySession(session)
 
 	// Clean up the whole call session
 	m.cleanupSession(session.ID)
@@ -416,7 +396,7 @@ func (m *Manager) waitForTransferTimeout(ctx context.Context, session *CallSessi
 	session.mu.Unlock()
 
 	// Broadcast no_answer event
-	m.broadcastTransferEvent(session.OrganizationID, websocket.TypeCallTransferNoAnswer, map[string]any{
+	m.broadcastEvent(session.OrganizationID, websocket.TypeCallTransferNoAnswer, map[string]any{
 		"id":           transferID.String(),
 		"completed_at": now.Format(time.RFC3339),
 	})
@@ -462,7 +442,7 @@ func (m *Manager) HandleCallerHangupDuringTransfer(session *CallSession) {
 	}
 	session.mu.Unlock()
 
-	m.broadcastTransferEvent(session.OrganizationID, websocket.TypeCallTransferAbandoned, map[string]any{
+	m.broadcastEvent(session.OrganizationID, websocket.TypeCallTransferAbandoned, map[string]any{
 		"id":           transferID.String(),
 		"completed_at": now.Format(time.RFC3339),
 	})
@@ -490,13 +470,3 @@ func (m *Manager) findSessionByTransferID(transferID uuid.UUID) *CallSession {
 	return nil
 }
 
-// broadcastTransferEvent sends a transfer event via WebSocket.
-func (m *Manager) broadcastTransferEvent(orgID uuid.UUID, eventType string, payload map[string]any) {
-	if m.wsHub == nil {
-		return
-	}
-	m.wsHub.BroadcastToOrg(orgID, websocket.WSMessage{
-		Type:    eventType,
-		Payload: payload,
-	})
-}
