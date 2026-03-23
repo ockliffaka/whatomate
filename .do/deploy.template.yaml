@@ -1,0 +1,63 @@
+spec:
+  name: whatomate
+  region: blr
+  services:
+    - name: whatomate
+      dockerfile_path: docker/Dockerfile
+      github:
+        branch: main
+        deploy_on_push: true
+        repo: shridarpatil/whatomate
+      instance_size_slug: basic-s
+      instance_count: 1
+      http_port: 8080
+      routes:
+        - path: /
+      health_check:
+        http_path: /health
+      envs:
+        - key: WHATOMATE_APP_ENVIRONMENT
+          value: "production"
+        - key: WHATOMATE_APP_ENCRYPTION_KEY
+          type: SECRET
+          value: "change-me-to-a-random-32-char-string"
+        - key: WHATOMATE_DATABASE_HOST
+          value: "${db.HOSTNAME}"
+        - key: WHATOMATE_DATABASE_PORT
+          value: "${db.PORT}"
+        - key: WHATOMATE_DATABASE_USER
+          value: "${db.USERNAME}"
+        - key: WHATOMATE_DATABASE_PASSWORD
+          value: "${db.PASSWORD}"
+        - key: WHATOMATE_DATABASE_NAME
+          value: "${db.DATABASE}"
+        - key: WHATOMATE_DATABASE_SSL_MODE
+          value: "require"
+        - key: WHATOMATE_REDIS_HOST
+          value: "${redis.HOSTNAME}"
+        - key: WHATOMATE_REDIS_PORT
+          value: "${redis.PORT}"
+        - key: WHATOMATE_REDIS_PASSWORD
+          value: "${redis.PASSWORD}"
+        - key: WHATOMATE_REDIS_TLS
+          value: "true"
+        - key: WHATOMATE_JWT_SECRET
+          type: SECRET
+          value: "change-me-to-a-random-32-char-string"
+        - key: WHATOMATE_COOKIE_SECURE
+          value: "true"
+        - key: WHATOMATE_SERVER_HOST
+          value: "0.0.0.0"
+        - key: WHATOMATE_SERVER_PORT
+          value: "8080"
+  databases:
+    - name: db
+      engine: PG
+      version: "16"
+      size: db-s-dev-database
+      num_nodes: 1
+    - name: redis
+      engine: REDIS
+      version: "7"
+      size: db-s-dev-database
+      num_nodes: 1

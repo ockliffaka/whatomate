@@ -4,6 +4,8 @@
 
 Modern, open-source WhatsApp Business Platform. Single binary app.
 
+[![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/shridarpatil/whatomate/tree/main&refcode=b3dd612d44a5)
+
 ![Dashboard](docs/public/images/dashboard-light.png#gh-light-mode-only)
 ![Dashboard](docs/public/images/dashboard-dark.png#gh-dark-mode-only)
 
