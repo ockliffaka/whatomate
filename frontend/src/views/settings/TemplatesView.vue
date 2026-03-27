@@ -984,9 +984,9 @@ function formatPreview(text: string, samples: any[]): string {
 
               <!-- Copy code specific fields -->
               <div v-if="button.type === 'COPY_CODE'" class="space-y-1">
-                <Label class="text-xs">Example coupon code</Label>
-                <Input v-model="button.example" placeholder="WELCOME10" class="h-9" />
-                <p class="text-xs text-muted-foreground">Sample coupon code for template approval (max 15 chars)</p>
+                <Label class="text-xs">{{ $t('templates.copyCodeExample') }}</Label>
+                <Input v-model="button.example" :placeholder="$t('templates.copyCodeExamplePlaceholder')" class="h-9" />
+                <p class="text-xs text-muted-foreground">{{ $t('templates.copyCodeExampleHint') }}</p>
               </div>
             </div>
           </div>
