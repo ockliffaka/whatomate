@@ -54,7 +54,7 @@ test.describe('IVR Flow Editor', () => {
 
     if (rowCount > 0) {
       // Click the first flow's edit action
-      const editButton = rows.first().getByRole('button').first()
+      const editButton = rows.first().getByRole('button', { name: /edit/i })
       if (await editButton.isVisible()) {
         await editButton.click()
         await page.waitForTimeout(1000)
