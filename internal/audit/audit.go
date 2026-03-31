@@ -18,6 +18,12 @@ var skipFields = map[string]bool{
 	"organization": true, "members": true,
 	"webhook_verify_token": true,
 	"api_config":           true,
+	"response_content":     true,
+	"conditions":           true,
+	"active_from":          true,
+	"active_until":         true,
+	"whatsapp_account":     true,
+	"case_sensitive":       true,
 }
 
 // ComputeChanges compares old and new structs via JSON serialization.
