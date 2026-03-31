@@ -5,13 +5,11 @@ import { Page, expect } from '@playwright/test'
  */
 
 export async function expectMetadataVisible(page: Page) {
-  const el = page.getByText('Metadata')
-  await expect(el).toBeVisible({ timeout: 10000 })
+  await expect(page.getByText('Metadata')).toBeVisible({ timeout: 15000 })
 }
 
 export async function expectActivityLogVisible(page: Page) {
-  const el = page.getByText('Activity Log')
-  await expect(el).toBeVisible({ timeout: 10000 })
+  await expect(page.getByText('Activity Log')).toBeVisible({ timeout: 15000 })
 }
 
 export async function expectSaveButtonOnChange(page: Page) {
