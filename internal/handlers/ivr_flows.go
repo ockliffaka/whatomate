@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/shridarpatil/whatomate/internal/audit"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -78,7 +79,7 @@ func (a *App) GetIVRFlow(r *fastglue.Request) error {
 		return nil
 	}
 
-	flow, err := findByIDAndOrg[models.IVRFlow](a.DB, r, flowID, orgID, "IVR Flow")
+	flow, err := findByIDAndOrg[models.IVRFlow](a.DB.Preload("CreatedBy").Preload("UpdatedBy"), r, flowID, orgID, "IVR Flow")
 	if err != nil {
 		return nil
 	}
@@ -152,6 +153,8 @@ func (a *App) CreateIVRFlow(r *fastglue.Request) error {
 		IsOutgoingEnd:   req.IsOutgoingEnd,
 		Menu:            req.Menu,
 		WelcomeAudioURL: req.WelcomeAudioURL,
+		CreatedByID:     &userID,
+		UpdatedByID:     &userID,
 	}
 
 	if err := a.DB.Create(&flow).Error; err != nil {
@@ -162,6 +165,9 @@ func (a *App) CreateIVRFlow(r *fastglue.Request) error {
 	if a.CallManager != nil {
 		a.CallManager.InvalidateIVRFlowCache(flow.ID, flow.OrganizationID, flow.WhatsAppAccount)
 	}
+
+	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+		"ivr_flow", flow.ID, models.AuditActionCreated, nil, &flow)
 
 	return r.SendEnvelope(flow)
 }
@@ -185,6 +191,8 @@ func (a *App) UpdateIVRFlow(r *fastglue.Request) error {
 	if err != nil {
 		return nil
 	}
+
+	oldFlow := *flow // value copy for audit
 
 	var req IVRFlowRequest
 	if err := a.decodeRequest(r, &req); err != nil {
@@ -232,6 +240,7 @@ func (a *App) UpdateIVRFlow(r *fastglue.Request) error {
 		"is_active":       req.IsActive,
 		"is_call_start":   req.IsCallStart,
 		"is_outgoing_end": req.IsOutgoingEnd,
+		"updated_by_id":   userID,
 	}
 	if req.Name != "" {
 		updates["name"] = req.Name
@@ -256,13 +265,110 @@ func (a *App) UpdateIVRFlow(r *fastglue.Request) error {
 	}
 
 	// Reload for response
-	a.DB.First(flow, flowID)
+	a.DB.Preload("CreatedBy").Preload("UpdatedBy").First(flow, flowID)
 
 	if a.CallManager != nil {
 		a.CallManager.InvalidateIVRFlowCache(flow.ID, flow.OrganizationID, flow.WhatsAppAccount)
 	}
 
+	// Compare IVR menu nodes for audit
+	var extraChanges []map[string]any
+	if req.Menu != nil {
+		extraChanges = diffIVRMenuNodes(oldFlow.Menu, req.Menu)
+	}
+
+	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+		"ivr_flow", flow.ID, models.AuditActionUpdated, &oldFlow, flow, extraChanges...)
+
 	return r.SendEnvelope(flow)
+}
+
+// diffIVRMenuNodes compares old and new IVR menu JSONB to find node-level changes
+func diffIVRMenuNodes(oldMenu, newMenu models.JSONB) []map[string]any {
+	var changes []map[string]any
+
+	type ivrNode struct {
+		ID     string         `json:"id"`
+		Type   string         `json:"type"`
+		Label  string         `json:"label"`
+		Config map[string]any `json:"config"`
+	}
+
+	extractNodes := func(menu models.JSONB) map[string]ivrNode {
+		result := make(map[string]ivrNode)
+		nodesRaw, ok := menu["nodes"]
+		if !ok {
+			return result
+		}
+		nodesSlice, ok := nodesRaw.([]any)
+		if !ok {
+			return result
+		}
+		for _, raw := range nodesSlice {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			b, _ := json.Marshal(m)
+			var n ivrNode
+			json.Unmarshal(b, &n)
+			if n.ID != "" {
+				result[n.ID] = n
+			}
+		}
+		return result
+	}
+
+	oldNodes := extractNodes(oldMenu)
+	newNodes := extractNodes(newMenu)
+
+	// Detect added nodes
+	for id, n := range newNodes {
+		if _, exists := oldNodes[id]; !exists {
+			changes = append(changes, map[string]any{
+				"field": "node_added", "old_value": nil, "new_value": n.Label + " (" + n.Type + ")",
+			})
+		}
+	}
+
+	// Detect removed nodes
+	for id, n := range oldNodes {
+		if _, exists := newNodes[id]; !exists {
+			changes = append(changes, map[string]any{
+				"field": "node_removed", "old_value": n.Label + " (" + n.Type + ")", "new_value": nil,
+			})
+		}
+	}
+
+	// Detect modified nodes
+	for id, newN := range newNodes {
+		oldN, exists := oldNodes[id]
+		if !exists {
+			continue
+		}
+		if oldN.Label != newN.Label {
+			changes = append(changes, map[string]any{
+				"field": newN.Label + " → label", "old_value": oldN.Label, "new_value": newN.Label,
+			})
+		}
+		// Compare config fields
+		for key, newVal := range newN.Config {
+			oldVal := oldN.Config[key]
+			oldJSON, _ := json.Marshal(oldVal)
+			newJSON, _ := json.Marshal(newVal)
+			if string(oldJSON) != string(newJSON) {
+				label := newN.Label
+				if label == "" {
+					label = id
+				}
+				changes = append(changes, map[string]any{
+					"field": label + " → " + key, "old_value": oldVal, "new_value": newVal,
+				})
+			}
+		}
+	}
+
+	return changes
 }
 
 // DeleteIVRFlow soft-deletes an IVR flow
@@ -293,6 +399,9 @@ func (a *App) DeleteIVRFlow(r *fastglue.Request) error {
 	if a.CallManager != nil {
 		a.CallManager.InvalidateIVRFlowCache(flow.ID, flow.OrganizationID, flow.WhatsAppAccount)
 	}
+
+	audit.LogAudit(a.DB, orgID, userID, audit.GetUserName(a.DB, userID),
+		"ivr_flow", flow.ID, models.AuditActionDeleted, flow, nil)
 
 	return r.SendEnvelope(map[string]string{"message": "IVR flow deleted"})
 }

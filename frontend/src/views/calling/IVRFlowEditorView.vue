@@ -11,7 +11,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { ArrowLeft, Save, Volume2, Grid3X3, Hash, Globe, Users, ExternalLink, Clock, PhoneOff } from 'lucide-vue-next'
+import { ArrowLeft, Save, Volume2, Grid3X3, Hash, Globe, Users, ExternalLink, Clock, PhoneOff, ChevronDown } from 'lucide-vue-next'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import AuditLogPanel from '@/components/shared/AuditLogPanel.vue'
 import { toast } from 'vue-sonner'
 import ConfirmDialog from '@/components/shared/ConfirmDialog.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
@@ -37,6 +39,7 @@ const isActive = ref(true)
 const isCallStart = ref(false)
 const isOutgoingEnd = ref(false)
 const saving = ref(false)
+const auditRefreshKey = ref(0)
 const loading = ref(true)
 const loadError = ref(false)
 
@@ -332,6 +335,7 @@ async function saveFlow() {
     }
 
     toast.success(t('calling.flowUpdated'))
+    auditRefreshKey.value++
   } catch (e: any) {
     const msg = e?.response?.data?.message || t('calling.flowSaveFailed')
     toast.error(msg)
@@ -472,6 +476,17 @@ onMounted(() => {
         />
       </div>
     </div>
+
+    <!-- Activity Log (collapsible at the bottom) -->
+    <Collapsible class="border-t">
+      <CollapsibleTrigger class="flex items-center justify-between w-full px-4 py-2 text-sm font-medium hover:bg-muted/50 transition-colors">
+        {{ $t('common.activityLog', 'Activity Log') }}
+        <ChevronDown class="h-4 w-4" />
+      </CollapsibleTrigger>
+      <CollapsibleContent class="px-4 pb-4">
+        <AuditLogPanel :key="auditRefreshKey" resource-type="ivr_flow" :resource-id="flowId" />
+      </CollapsibleContent>
+    </Collapsible>
 
     <!-- Node Delete Confirmation -->
     <ConfirmDialog

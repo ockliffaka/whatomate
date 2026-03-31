@@ -79,12 +79,16 @@ type IVRFlow struct {
 	Description     string    `gorm:"type:text" json:"description"`
 	IsActive        bool      `gorm:"default:true" json:"is_active"`
 	IsCallStart     bool      `gorm:"default:false" json:"is_call_start"`
-	IsOutgoingEnd   bool      `gorm:"default:false" json:"is_outgoing_end"`
-	Menu            JSONB     `gorm:"type:jsonb" json:"menu"`
-	WelcomeAudioURL string    `gorm:"type:text" json:"welcome_audio_url"`
+	IsOutgoingEnd   bool       `gorm:"default:false" json:"is_outgoing_end"`
+	Menu            JSONB      `gorm:"type:jsonb" json:"menu"`
+	WelcomeAudioURL string     `gorm:"type:text" json:"welcome_audio_url"`
+	CreatedByID     *uuid.UUID `gorm:"type:uuid" json:"created_by_id,omitempty"`
+	UpdatedByID     *uuid.UUID `gorm:"type:uuid" json:"updated_by_id,omitempty"`
 
 	// Relations
 	Organization *Organization `gorm:"foreignKey:OrganizationID" json:"organization,omitempty"`
+	CreatedBy    *User         `gorm:"foreignKey:CreatedByID" json:"created_by,omitempty"`
+	UpdatedBy    *User         `gorm:"foreignKey:UpdatedByID" json:"updated_by,omitempty"`
 }
 
 func (IVRFlow) TableName() string {
