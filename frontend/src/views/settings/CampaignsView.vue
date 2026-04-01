@@ -9,14 +9,6 @@ import { Progress } from '@/components/ui/progress'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { RangeCalendar } from '@/components/ui/range-calendar'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -40,8 +32,6 @@ import {
   Clock,
   AlertCircle,
   CalendarIcon,
-  ImageIcon,
-  FileText
 } from 'lucide-vue-next'
 import { formatDate } from '@/lib/utils'
 import { useDebounceFn } from '@vueuse/core'
@@ -325,44 +315,6 @@ function getProgressPercentage(campaign: Campaign): number {
   return Math.round((campaign.sent_count / campaign.total_recipients) * 100)
 }
 
-function campaignHasMedia(campaign: Campaign): boolean {
-  return !!campaign.header_media_id
-}
-
-// Cache for media blob URLs and loading states
-const mediaBlobUrls = ref<Record<string, string>>({})
-const mediaLoadingState = ref<Record<string, 'loading' | 'loaded' | 'error'>>({})
-
-async function loadMediaPreview(campaignId: string) {
-  if (mediaLoadingState.value[campaignId]) return // Already loading or loaded
-
-  mediaLoadingState.value[campaignId] = 'loading'
-  try {
-    const response = await campaignsService.getMedia(campaignId)
-    const blob = new Blob([response.data], { type: response.headers['content-type'] })
-    mediaBlobUrls.value[campaignId] = URL.createObjectURL(blob)
-    mediaLoadingState.value[campaignId] = 'loaded'
-  } catch (error) {
-    console.error('Failed to load media preview:', error)
-    mediaLoadingState.value[campaignId] = 'error'
-  }
-}
-
-function getMediaPreviewUrl(campaignId: string): string {
-  if (!mediaLoadingState.value[campaignId]) {
-    loadMediaPreview(campaignId)
-  }
-  return mediaBlobUrls.value[campaignId] || ''
-}
-
-// Media preview dialog
-const showMediaPreviewDialog = ref(false)
-const previewingCampaign = ref<Campaign | null>(null)
-
-function openMediaPreview(campaign: Campaign) {
-  previewingCampaign.value = campaign
-  showMediaPreviewDialog.value = true
-}
 </script>
 
 <template>
@@ -463,10 +415,7 @@ function openMediaPreview(campaign: Campaign) {
                 @page-change="handlePageChange"
               >
                 <template #cell-name="{ item: campaign }">
-                  <div class="flex items-center gap-1.5">
-                    <RouterLink :to="`/campaigns/${campaign.id}`" class="font-medium text-inherit no-underline hover:opacity-80">{{ campaign.name }}</RouterLink>
-                    <ImageIcon v-if="campaignHasMedia(campaign)" class="h-3.5 w-3.5 text-muted-foreground cursor-pointer hover:text-foreground" :title="campaign.header_media_filename" @click.stop="openMediaPreview(campaign)" />
-                  </div>
+                  <RouterLink :to="`/campaigns/${campaign.id}`" class="font-medium text-inherit no-underline hover:opacity-80">{{ campaign.name }}</RouterLink>
                 </template>
                 <template #cell-template="{ item: campaign }">
                   <span class="text-sm text-muted-foreground">{{ campaign.template_name || '—' }}</span>
@@ -530,37 +479,5 @@ function openMediaPreview(campaign: Campaign) {
     />
 
     <!-- Media Preview Dialog -->
-    <Dialog v-model:open="showMediaPreviewDialog">
-      <DialogContent class="sm:max-w-[600px]">
-        <DialogHeader>
-          <DialogTitle>{{ $t('campaigns.mediaPreview') }}</DialogTitle>
-          <DialogDescription>
-            {{ previewingCampaign?.header_media_filename }}
-            <span v-if="previewingCampaign?.header_media_mime_type" class="text-xs"> ({{ previewingCampaign.header_media_mime_type }})</span>
-          </DialogDescription>
-        </DialogHeader>
-        <div class="flex items-center justify-center py-4">
-          <img
-            v-if="previewingCampaign?.header_media_mime_type?.startsWith('image/') && previewingCampaign?.id"
-            :src="getMediaPreviewUrl(previewingCampaign.id)"
-            :alt="previewingCampaign?.header_media_filename"
-            class="max-w-full max-h-[60vh] object-contain rounded"
-          />
-          <video
-            v-else-if="previewingCampaign?.header_media_mime_type?.startsWith('video/') && previewingCampaign?.id"
-            :src="getMediaPreviewUrl(previewingCampaign.id)"
-            controls
-            class="max-w-full max-h-[60vh] rounded"
-          />
-          <div v-else class="flex flex-col items-center gap-3 py-6 text-muted-foreground">
-            <FileText class="h-16 w-16" />
-            <span class="text-sm font-medium">{{ previewingCampaign?.header_media_filename }}</span>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" @click="showMediaPreviewDialog = false">{{ $t('common.close') }}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   </div>
 </template>

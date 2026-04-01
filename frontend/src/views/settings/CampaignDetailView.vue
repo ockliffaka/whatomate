@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { campaignsService, templatesService, api } from '@/services/api'
+import { wsService } from '@/services/websocket'
 import { toast } from 'vue-sonner'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useHeaderMedia } from '@/composables/useHeaderMedia'
@@ -230,7 +231,7 @@ const templateParamNames = computed(() => {
 const recipientPlaceholder = computed(() => {
   const params = templateParamNames.value
   if (params.length === 0) {
-    return `+1234567890\n+0987654321\n+1122334455`
+    return `+1234567890, John Doe\n+0987654321, Jane Smith\n+1122334455`
   }
   const exampleValues = params.map((p, i) => {
     if (/^\d+$/.test(p)) return `value${i + 1}`
@@ -240,19 +241,13 @@ const recipientPlaceholder = computed(() => {
     if (p.toLowerCase().includes('amount') || p.toLowerCase().includes('price')) return '99.99'
     return `${p}_value`
   })
-  const line1 = `+1234567890, ${exampleValues.join(', ')}`
-  const line2 = `+0987654321, ${exampleValues.map((v) => {
-    if (v === 'John Doe') return 'Jane Smith'
-    if (v === 'ORD-123') return 'ORD-456'
-    return v
-  }).join(', ')}`
-  return `${line1}\n${line2}`
+  return `+1234567890, John Doe, ${exampleValues.join(', ')}\n+0987654321, Jane Smith, ${exampleValues.join(', ')}`
 })
 
 const manualEntryFormat = computed(() => {
   const params = templateParamNames.value
-  if (params.length === 0) return 'phone_number'
-  return `phone_number, ${params.join(', ')}`
+  if (params.length === 0) return 'phone_number, name (optional)'
+  return `phone_number, name, ${params.join(', ')}`
 })
 
 // Status helpers
@@ -575,11 +570,12 @@ const manualInputValidation = computed(() => {
       continue
     }
 
-    const providedParams = parts.slice(1).filter((p: string) => p.length > 0).length
+    // Params start from 3rd field (after phone + name)
+    const providedParams = parts.slice(2).filter((p: string) => p.length > 0).length
     if (params.length > 0 && providedParams < params.length) {
       invalidLines.push({
         lineNumber: i + 1,
-        reason: `Missing parameters (need ${params.length}, got ${providedParams})`
+        reason: `Missing template parameters (need ${params.length}, got ${providedParams})`
       })
     }
   }
@@ -606,16 +602,23 @@ async function addRecipients() {
     return
   }
 
+  // Format: phone_number, name, param1, param2, ...
   const paramNames = templateParamNames.value
   const recipientsList = lines.map(line => {
     const parts = line.split(',').map(p => p.trim())
     const recipient: { phone_number: string; recipient_name?: string; template_params?: Record<string, any> } = {
       phone_number: parts[0].replace(/[^\d+]/g, ''),
     }
+    // Second field is always recipient name
+    if (parts[1]?.trim()) {
+      recipient.recipient_name = parts[1].trim()
+    }
+    // Template params start from third field
     const params: Record<string, any> = {}
-    for (let i = 1; i < parts.length && i <= paramNames.length; i++) {
-      if (parts[i] && parts[i].length > 0) {
-        params[paramNames[i - 1]] = parts[i]
+    for (let i = 0; i < paramNames.length; i++) {
+      const val = parts[i + 2] // offset by 2 (phone + name)
+      if (val && val.length > 0) {
+        params[paramNames[i]] = val
       }
     }
     if (Object.keys(params).length > 0) {
@@ -671,22 +674,33 @@ async function addRecipientsFromCSV() {
       return
     }
 
+    // Detect name column
+    const nameIndex = headers.findIndex(h =>
+      h === 'name' || h === 'recipient_name' || h === 'recipientname' || h === 'customer_name'
+    )
+
     const paramNames = templateParamNames.value
-    const recipientsList: { phone_number: string; template_params?: Record<string, any> }[] = []
+    const recipientsList: { phone_number: string; recipient_name?: string; template_params?: Record<string, any> }[] = []
 
     for (let i = 1; i < lines.length; i++) {
       const values = lines[i].split(',').map(v => v.trim())
       const phone = values[phoneIndex]?.replace(/[^\d+]/g, '')
       if (!phone) continue
 
-      const recipient: { phone_number: string; template_params?: Record<string, any> } = {
+      const recipient: { phone_number: string; recipient_name?: string; template_params?: Record<string, any> } = {
         phone_number: phone,
+      }
+
+      // Extract name if column exists
+      if (nameIndex !== -1 && values[nameIndex]?.trim()) {
+        recipient.recipient_name = values[nameIndex].trim()
       }
 
       // Map remaining columns to template params by name match or position
       if (paramNames.length > 0) {
         const params: Record<string, any> = {}
         const usedIndices = new Set<number>([phoneIndex])
+        if (nameIndex !== -1) usedIndices.add(nameIndex)
 
         // Try name matching first
         for (const paramName of paramNames) {
@@ -755,6 +769,30 @@ onMounted(async () => {
       }
     }
     await loadRecipients()
+  }
+
+  // Subscribe to real-time campaign stats updates
+  if (!isNew.value) {
+    unsubscribeStats = wsService.onCampaignStatsUpdate((payload: any) => {
+      if (campaign.value && payload.campaign_id === campaign.value.id) {
+        campaign.value.sent_count = payload.sent_count
+        campaign.value.delivered_count = payload.delivered_count
+        campaign.value.read_count = payload.read_count
+        campaign.value.failed_count = payload.failed_count
+        if (payload.status && payload.status !== campaign.value.status) {
+          campaign.value.status = payload.status
+          auditRefreshKey.value++
+        }
+      }
+    })
+  }
+})
+
+let unsubscribeStats: (() => void) | null = null
+
+onUnmounted(() => {
+  if (unsubscribeStats) {
+    unsubscribeStats()
   }
 })
 </script>
@@ -1138,8 +1176,11 @@ onMounted(async () => {
         <TabsContent value="manual" class="space-y-3 mt-3">
           <div class="space-y-1.5">
             <Label class="text-xs text-muted-foreground">
-              {{ $t('campaigns.formatHint', 'Format') }}: {{ manualEntryFormat }}
+              {{ $t('campaigns.formatHint', 'Format') }}: <code class="text-[10px] bg-muted px-1 rounded">{{ manualEntryFormat }}</code>
             </Label>
+            <p class="text-[10px] text-muted-foreground mb-1">
+              {{ $t('campaigns.recipientFormatNote', 'One recipient per line. Name is optional. Template parameters must match the selected template.') }}
+            </p>
             <Textarea
               v-model="recipientsInput"
               :placeholder="recipientPlaceholder"
@@ -1181,7 +1222,7 @@ onMounted(async () => {
         <TabsContent value="csv" class="space-y-3 mt-3">
           <div class="space-y-1.5">
             <Label class="text-xs text-muted-foreground">
-              {{ $t('campaigns.csvFormatHint', 'CSV must include a phone_number (or phone, mobile, number) column.') }}
+              {{ $t('campaigns.csvFormatHint', 'CSV must include a phone_number (or phone, mobile, number) column. Optionally include a name (or recipient_name) column.') }}
             </Label>
             <div
               class="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 transition-colors"
