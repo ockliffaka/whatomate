@@ -86,6 +86,10 @@ type IncomingTextMessage struct {
 		Name      string  `json:"name,omitempty"`
 		Address   string  `json:"address,omitempty"`
 	} `json:"location,omitempty"`
+	Button *struct {
+		Text    string `json:"text"`
+		Payload string `json:"payload"`
+	} `json:"button,omitempty"`
 	Contacts []struct {
 		Name struct {
 			FormattedName string `json:"formatted_name"`
@@ -145,6 +149,11 @@ func (a *App) processIncomingMessageFull(phoneNumberID string, msg IncomingTextM
 
 	if msg.Type == "text" && msg.Text != nil {
 		messageText = msg.Text.Body
+	} else if msg.Type == "button" && msg.Button != nil {
+		// Template quick_reply button click — WhatsApp sends type "button"
+		messageText = msg.Button.Text
+		buttonID = msg.Button.Payload
+		messageType = "button_reply"
 	} else if msg.Type == "interactive" && msg.Interactive != nil {
 		// Handle button reply
 		if msg.Interactive.ButtonReply != nil {
@@ -2240,7 +2249,7 @@ func (a *App) saveIncomingMessage(account *models.WhatsAppAccount, contact *mode
 	if len(preview) > 100 {
 		preview = preview[:97] + "..."
 	}
-	if msgType != "text" {
+	if msgType != "text" && msgType != "button_reply" {
 		preview = "[" + msgType + "]"
 	}
 
