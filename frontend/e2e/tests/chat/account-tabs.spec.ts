@@ -187,8 +187,8 @@ test.describe('Multi-Account Tabs', () => {
     const activeTab = chatPage.activeAccountTab
     await expect(activeTab).toHaveCount(1)
 
-    // The contact's whatsapp_account is account-1, so it should be selected
-    await expect(activeTab).toHaveText('account-1')
+    // The most recent incoming message is from account-2, so it should be selected
+    await expect(activeTab).toHaveText('account-2')
   })
 
   test('should have visible inactive tab styling', async ({ page }) => {
@@ -212,15 +212,15 @@ test.describe('Multi-Account Tabs', () => {
     await chatPage.goto(CONTACT_ID)
     await page.waitForTimeout(500)
 
-    // Default active is account-1 (contact's whatsapp_account)
-    await expect(chatPage.activeAccountTab).toHaveText('account-1')
+    // Default active is account-2 (most recent incoming)
+    await expect(chatPage.activeAccountTab).toHaveText('account-2')
 
-    // Click account-2 tab
-    await chatPage.switchAccount('account-2')
+    // Click account-1 tab
+    await chatPage.switchAccount('account-1')
     await page.waitForTimeout(300)
 
-    // Now account-2 should be active
-    await expect(chatPage.activeAccountTab).toHaveText('account-2')
+    // Now account-1 should be active
+    await expect(chatPage.activeAccountTab).toHaveText('account-1')
   })
 
   test('should fetch filtered messages when switching account', async ({ page }) => {
@@ -236,12 +236,12 @@ test.describe('Multi-Account Tabs', () => {
       }
     })
 
-    // Switch to account-2 (account-1 is already the default)
-    await chatPage.switchAccount('account-2')
+    // Switch to account-1
+    await chatPage.switchAccount('account-1')
     await page.waitForTimeout(300)
 
-    // Verify a messages request was made with account=account-2
-    const filtered = messageRequests.find(url => url.includes('account=account-2'))
+    // Verify a messages request was made with account=account-1
+    const filtered = messageRequests.find(url => url.includes('account=account-1'))
     expect(filtered).toBeTruthy()
   })
 

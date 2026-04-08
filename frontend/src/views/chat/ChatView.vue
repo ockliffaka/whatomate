@@ -504,27 +504,41 @@ async function selectContact(id: string) {
     contactsStore.setAccountFilter(null)
 
     contactsStore.setCurrentContact(contact)
+    await contactsStore.fetchMessages(id)
 
-    // Determine account filter upfront to avoid a double fetch
-    if (orgAccounts.value.length > 1) {
-      // Use the contact's default account or fall back to first org account
-      selectedAccount.value = contact.whatsapp_account || orgAccounts.value[0]?.name
-      if (selectedAccount.value) {
-        contactsStore.setAccountFilter(selectedAccount.value)
-      }
-    } else if (contact.whatsapp_account) {
-      selectedAccount.value = contact.whatsapp_account
-    }
-
-    // Single fetch — filtered by account when applicable
-    await contactsStore.fetchMessages(id, selectedAccount.value ? { account: selectedAccount.value } : undefined)
-
-    // Discover distinct accounts from the fetched messages
+    // Discover distinct accounts from the unfiltered message set
     const accounts = new Set<string>()
     for (const msg of contactsStore.messages) {
       if (msg.whatsapp_account) accounts.add(msg.whatsapp_account)
     }
     contactAccounts.value = Array.from(accounts).sort()
+
+    // Auto-select account and filter client-side (avoids a second fetch)
+    if (orgAccounts.value.length > 1) {
+      // Find account of the most recent incoming message
+      for (let i = contactsStore.messages.length - 1; i >= 0; i--) {
+        const msg = contactsStore.messages[i]
+        if (msg.direction === 'incoming' && msg.whatsapp_account) {
+          selectedAccount.value = msg.whatsapp_account
+          break
+        }
+      }
+      // Fallback to contact's default account, then first org account
+      if (!selectedAccount.value) {
+        selectedAccount.value = contact.whatsapp_account || contactAccounts.value[0] || orgAccounts.value[0]?.name
+      }
+      if (selectedAccount.value) {
+        contactsStore.setAccountFilter(selectedAccount.value)
+        // Filter messages client-side instead of re-fetching
+        contactsStore.messages = contactsStore.messages.filter(
+          (m: any) => m.whatsapp_account === selectedAccount.value
+        )
+      }
+    } else if (contactAccounts.value.length === 1) {
+      selectedAccount.value = contactAccounts.value[0]
+    } else if (contact.whatsapp_account) {
+      selectedAccount.value = contact.whatsapp_account
+    }
 
     // Tell WebSocket server which contact we're viewing
     wsService.setCurrentContact(id)
