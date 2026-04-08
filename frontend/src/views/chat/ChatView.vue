@@ -481,7 +481,8 @@ function updateStickyDate(scrollContainer: HTMLElement) {
 // Watch for route changes
 watch(contactId, async (newId) => {
   if (newId) {
-    notesStore.clearNotes()
+    notesStore.notes = []
+    notesStore.hasMore = false
     await selectContact(newId)
   } else {
     wsService.setCurrentContact(null)
@@ -503,39 +504,27 @@ async function selectContact(id: string) {
     contactsStore.setAccountFilter(null)
 
     contactsStore.setCurrentContact(contact)
-    await contactsStore.fetchMessages(id)
 
-    // Discover distinct accounts from the unfiltered message set
+    // Determine account filter upfront to avoid a double fetch
+    if (orgAccounts.value.length > 1) {
+      // Use the contact's default account or fall back to first org account
+      selectedAccount.value = contact.whatsapp_account || orgAccounts.value[0]?.name
+      if (selectedAccount.value) {
+        contactsStore.setAccountFilter(selectedAccount.value)
+      }
+    } else if (contact.whatsapp_account) {
+      selectedAccount.value = contact.whatsapp_account
+    }
+
+    // Single fetch — filtered by account when applicable
+    await contactsStore.fetchMessages(id, selectedAccount.value ? { account: selectedAccount.value } : undefined)
+
+    // Discover distinct accounts from the fetched messages
     const accounts = new Set<string>()
     for (const msg of contactsStore.messages) {
       if (msg.whatsapp_account) accounts.add(msg.whatsapp_account)
     }
     contactAccounts.value = Array.from(accounts).sort()
-
-    // Auto-select account
-    if (orgAccounts.value.length > 1) {
-      // Find account of the most recent incoming message
-      for (let i = contactsStore.messages.length - 1; i >= 0; i--) {
-        const msg = contactsStore.messages[i]
-        if (msg.direction === 'incoming' && msg.whatsapp_account) {
-          selectedAccount.value = msg.whatsapp_account
-          break
-        }
-      }
-      // Fallback to contact's default account, then first org account
-      if (!selectedAccount.value) {
-        selectedAccount.value = contact.whatsapp_account || contactAccounts.value[0] || orgAccounts.value[0]?.name
-      }
-      // Re-fetch messages filtered by selected account
-      if (selectedAccount.value) {
-        contactsStore.setAccountFilter(selectedAccount.value)
-        await contactsStore.fetchMessages(id, { account: selectedAccount.value })
-      }
-    } else if (contactAccounts.value.length === 1) {
-      selectedAccount.value = contactAccounts.value[0]
-    } else if (contact.whatsapp_account) {
-      selectedAccount.value = contact.whatsapp_account
-    }
 
     // Tell WebSocket server which contact we're viewing
     wsService.setCurrentContact(id)
@@ -554,17 +543,17 @@ async function selectContact(id: string) {
       messagesScroll.setup()
     }, 50)
 
-    // Fetch notes for badge count
-    notesStore.fetchNotes(id)
-
-    // Fetch session data and auto-open panel if configured
-    try {
-      const response = await contactsService.getSessionData(id)
-      contactSessionData.value = response.data.data || response.data
+    // Fetch notes and session data in parallel (independent requests)
+    const [, sessionResult] = await Promise.all([
+      notesStore.fetchNotes(id),
+      contactsService.getSessionData(id).catch(() => null)
+    ])
+    if (sessionResult) {
+      contactSessionData.value = sessionResult.data.data || sessionResult.data
       if (contactSessionData.value?.panel_config?.sections?.length > 0) {
         isInfoPanelOpen.value = true
       }
-    } catch {
+    } else {
       contactSessionData.value = null
     }
   }
