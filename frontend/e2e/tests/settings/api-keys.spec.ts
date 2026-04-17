@@ -114,9 +114,9 @@ test.describe('API Keys Management', () => {
     await tablePage.search(keyName)
     await tablePage.expectRowExists(keyName)
 
-    // Click delete button on the row
+    // Click the delete (last) button on the row
     const row = await tablePage.getRow(keyName)
-    await row.getByRole('button').first().click()
+    await row.locator('td:last-child button').last().click()
     await expect(page.locator('[role="alertdialog"]')).toBeVisible()
     await page.locator('[role="alertdialog"]').getByRole('button', { name: /delete|confirm/i }).click()
 
