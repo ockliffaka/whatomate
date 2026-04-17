@@ -13,17 +13,15 @@ import AuditLogPanel from '@/components/shared/AuditLogPanel.vue'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Key, Trash2 } from 'lucide-vue-next'
+import { Key, Trash2, Save, Copy, AlertTriangle } from 'lucide-vue-next'
+import { IconButton } from '@/components/shared'
 
 interface APIKey {
   id: string
@@ -42,12 +40,21 @@ const { t } = useI18n()
 const authStore = useAuthStore()
 
 const keyId = computed(() => route.params.id as string)
+const isNew = computed(() => keyId.value === 'new')
 const apiKey = ref<APIKey | null>(null)
 const isLoading = ref(true)
 const isNotFound = ref(false)
+const isSaving = ref(false)
 const deleteDialogOpen = ref(false)
 
+const canWrite = computed(() => authStore.hasPermission('api_keys', 'write'))
 const canDelete = computed(() => authStore.hasPermission('api_keys', 'delete'))
+
+const form = ref({ name: '', expires_at: '' })
+
+const isKeyDisplayOpen = ref(false)
+const newlyCreatedKey = ref<{ key: string } | null>(null)
+const createdKeyId = ref<string | null>(null)
 
 const isExpired = computed(() => {
   if (!apiKey.value?.expires_at) return false
@@ -71,7 +78,7 @@ const statusLabel = computed(() => {
 const breadcrumbs = computed(() => [
   { label: t('nav.settings'), href: '/settings' },
   { label: t('nav.apiKeys', 'API Keys'), href: '/settings/api-keys' },
-  { label: apiKey.value?.name || '' },
+  { label: isNew.value ? t('apiKeys.newApiKey', 'New API Key') : (apiKey.value?.name || '') },
 ])
 
 async function loadApiKey() {
@@ -87,6 +94,25 @@ async function loadApiKey() {
   }
 }
 
+async function create() {
+  if (!form.value.name.trim()) { toast.error(t('apiKeys.nameRequired')); return }
+  isSaving.value = true
+  try {
+    const payload: { name: string; expires_at?: string } = { name: form.value.name.trim() }
+    if (form.value.expires_at) payload.expires_at = new Date(form.value.expires_at).toISOString()
+    const response = await apiKeysService.create(payload)
+    const created = response.data.data
+    newlyCreatedKey.value = created
+    createdKeyId.value = created.id
+    isKeyDisplayOpen.value = true
+    toast.success(t('common.createdSuccess', { resource: t('resources.APIKey', 'API Key') }))
+  } catch (e) {
+    toast.error(getErrorMessage(e, t('common.failedCreate', { resource: t('resources.APIKey', 'API key') })))
+  } finally {
+    isSaving.value = false
+  }
+}
+
 async function deleteApiKey() {
   if (!apiKey.value) return
   try {
@@ -99,13 +125,24 @@ async function deleteApiKey() {
   deleteDialogOpen.value = false
 }
 
-onMounted(loadApiKey)
+function copyToClipboard(text: string) {
+  navigator.clipboard.writeText(text)
+  toast.success(t('common.copiedToClipboard'))
+}
+
+onMounted(async () => {
+  if (isNew.value) {
+    isLoading.value = false
+  } else {
+    await loadApiKey()
+  }
+})
 </script>
 
 <template>
   <div class="h-full">
     <DetailPageLayout
-      :title="apiKey?.name || ''"
+      :title="isNew ? $t('apiKeys.newApiKey', 'New API Key') : (apiKey?.name || '')"
       :icon="Key"
       icon-gradient="bg-gradient-to-br from-amber-500 to-orange-600 shadow-amber-500/20"
       back-link="/settings/api-keys"
@@ -116,25 +153,39 @@ onMounted(loadApiKey)
     >
       <template #actions>
         <div class="flex items-center gap-2">
-          <Button
-            v-if="canDelete"
-            variant="destructive"
-            size="sm"
-            @click="deleteDialogOpen = true"
-          >
-            <Trash2 class="h-4 w-4 mr-1" />
-            {{ $t('common.delete') }}
+          <Button v-if="isNew && canWrite" size="sm" @click="create" :disabled="isSaving">
+            <Save class="h-4 w-4 mr-1" /> {{ isSaving ? $t('common.saving', 'Saving...') : $t('common.create') }}
+          </Button>
+          <Button v-if="!isNew && canDelete" variant="destructive" size="sm" @click="deleteDialogOpen = true">
+            <Trash2 class="h-4 w-4 mr-1" /> {{ $t('common.delete') }}
           </Button>
         </div>
       </template>
 
-      <Card>
+      <!-- Create form -->
+      <Card v-if="isNew">
+        <CardHeader class="pb-3">
+          <CardTitle class="text-sm font-medium">{{ $t('teams.details', 'Details') }}</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div class="space-y-1.5">
+            <Label class="text-xs">{{ $t('apiKeys.name') }} <span class="text-destructive">*</span></Label>
+            <Input v-model="form.name" :placeholder="$t('apiKeys.namePlaceholder')" />
+          </div>
+          <div class="space-y-1.5">
+            <Label class="text-xs">{{ $t('apiKeys.expiration') }}</Label>
+            <Input v-model="form.expires_at" type="datetime-local" />
+            <p class="text-xs text-muted-foreground">{{ $t('apiKeys.expirationHint') }}</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- View existing key -->
+      <Card v-else>
         <CardHeader class="pb-3">
           <div class="flex items-center justify-between">
             <CardTitle class="text-sm font-medium">{{ $t('teams.details', 'Details') }}</CardTitle>
-            <div class="flex items-center gap-2">
-              <Badge :variant="statusVariant">{{ statusLabel }}</Badge>
-            </div>
+            <Badge :variant="statusVariant">{{ statusLabel }}</Badge>
           </div>
         </CardHeader>
         <CardContent class="space-y-4">
@@ -150,33 +201,13 @@ onMounted(loadApiKey)
 
           <div class="grid gap-4">
             <div class="space-y-1">
-              <p class="text-xs text-muted-foreground">{{ $t('common.name', 'Name') }}</p>
-              <p class="text-sm font-medium">{{ apiKey?.name }}</p>
-            </div>
-
-            <div class="space-y-1">
-              <p class="text-xs text-muted-foreground">{{ $t('apiKeys.keyPrefix', 'Key Prefix') }}</p>
-              <code class="text-sm font-mono bg-muted px-2 py-1 rounded inline-block">whm_{{ apiKey?.key_prefix }}...</code>
-            </div>
-
-            <div class="space-y-1">
-              <p class="text-xs text-muted-foreground">{{ $t('common.status', 'Status') }}</p>
-              <div class="flex items-center gap-2">
-                <Badge :variant="statusVariant">{{ statusLabel }}</Badge>
-                <Badge v-if="isExpired" variant="destructive">{{ $t('apiKeys.expired', 'Expired') }}</Badge>
-              </div>
-            </div>
-
-            <div class="space-y-1">
               <p class="text-xs text-muted-foreground">{{ $t('common.createdAt', 'Created') }}</p>
               <p class="text-sm">{{ apiKey?.created_at ? formatDateTime(apiKey.created_at) : '—' }}</p>
             </div>
-
             <div class="space-y-1">
               <p class="text-xs text-muted-foreground">{{ $t('apiKeys.lastUsedAt', 'Last Used') }}</p>
               <p class="text-sm">{{ apiKey?.last_used_at ? formatDateTime(apiKey.last_used_at) : '—' }}</p>
             </div>
-
             <div class="space-y-1">
               <p class="text-xs text-muted-foreground">{{ $t('apiKeys.expiresAt', 'Expires') }}</p>
               <div class="flex items-center gap-2">
@@ -188,19 +219,43 @@ onMounted(loadApiKey)
         </CardContent>
       </Card>
 
-      <AuditLogPanel
-        v-if="apiKey"
-        resource-type="api_key"
-        :resource-id="apiKey.id"
-      />
+      <AuditLogPanel v-if="apiKey && !isNew" resource-type="api_key" :resource-id="apiKey.id" />
 
-      <template #sidebar>
-        <MetadataPanel
-          :created-at="apiKey?.created_at"
-          :updated-at="apiKey?.updated_at"
-        />
+      <template v-if="!isNew" #sidebar>
+        <MetadataPanel :created-at="apiKey?.created_at" :updated-at="apiKey?.updated_at" />
       </template>
     </DetailPageLayout>
+
+    <!-- Key created dialog (shown once after create) -->
+    <Dialog v-model:open="isKeyDisplayOpen">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{{ $t('apiKeys.apiKeyCreated') }}</DialogTitle>
+          <DialogDescription>
+            <div class="flex items-center gap-2 text-amber-600 mt-2">
+              <AlertTriangle class="h-4 w-4" />
+              <span>{{ $t('apiKeys.apiKeyCreatedWarning') }}</span>
+            </div>
+          </DialogDescription>
+        </DialogHeader>
+        <div class="space-y-4 py-4">
+          <div class="space-y-2">
+            <Label>{{ $t('apiKeys.yourApiKey') }}</Label>
+            <div class="flex gap-2">
+              <Input :model-value="newlyCreatedKey?.key" readonly class="font-mono text-sm" />
+              <IconButton :icon="Copy" :label="$t('apiKeys.copyApiKey')" variant="outline" @click="copyToClipboard(newlyCreatedKey?.key || '')" />
+            </div>
+          </div>
+          <div class="bg-muted p-3 rounded-lg text-sm">
+            <p class="font-medium mb-1">{{ $t('apiKeys.usage') }}:</p>
+            <code class="text-xs">curl -H "X-API-Key: {{ newlyCreatedKey?.key }}" https://your-api.com/api/contacts</code>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button size="sm" @click="isKeyDisplayOpen = false; if (createdKeyId) router.replace(`/settings/api-keys/${createdKeyId}`)">{{ $t('common.done') }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <AlertDialog v-model:open="deleteDialogOpen">
       <AlertDialogContent>
